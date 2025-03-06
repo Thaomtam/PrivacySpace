@@ -14,6 +14,7 @@ import de.robv.android.xposed.XposedHelpers
 import de.robv.android.xposed.callbacks.XC_LoadPackage
 import kotlinx.coroutines.MainScope
 import kotlinx.coroutines.launch
+import org.lsposed.hiddenapibypass.HiddenApiBypass
 import java.io.File
 
 class HookMain : IXposedHookLoadPackage {
@@ -69,17 +70,41 @@ class HookMain : IXposedHookLoadPackage {
     override fun handleLoadPackage(lpparam: XC_LoadPackage.LoadPackageParam) {
         packageName = lpparam.packageName
         classLoader = lpparam.classLoader
+        
         if (lpparam.packageName == ConfigConstant.ANDROID_FRAMEWORK) {
+            // Initialize Hidden API Bypass as early as possible for Android 9+ (API 28+)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                try {
+                    XLog.i("Initializing Hidden API Bypass")
+                    HiddenApiBypass.setHiddenApiExemptions("L")
+                } catch (e: Throwable) {
+                    XLog.e(e, "Failed to initialize Hidden API Bypass")
+                }
+            }
+            
             loadConfigDataAndParse()
             configServer.start(classLoader = classLoader)
+            
+            // Updated conditionals to include API 34 (Android 14)
             when {
+                Build.VERSION.SDK_INT >= 34 -> {
+                    XLog.i("Starting Android 14+ hook implementation")
+                    FrameworkHookerApi34Impl.start(classLoader)
+                }
+                Build.VERSION.SDK_INT >= 33 -> {
+                    XLog.i("Starting Android 13+ hook implementation")
+                    FrameworkHookerApi33Impl.start(classLoader)
+                }
                 Build.VERSION.SDK_INT >= 30 -> {
+                    XLog.i("Starting Android 11+ hook implementation")
                     FrameworkHookerApi30Impl.start(classLoader)
                 }
                 Build.VERSION.SDK_INT >= 28 -> {
+                    XLog.i("Starting Android 9+ hook implementation")
                     FrameworkHookerApi28Impl.start(classLoader)
                 }
                 else -> {
+                    XLog.i("Starting Android 8+ hook implementation")
                     FrameworkHookerApi26Impl.start(classLoader)
                 }
             }
@@ -101,7 +126,7 @@ class HookMain : IXposedHookLoadPackage {
                     }
                 })
         } else if (AppHelper.isSystemApp(lpparam.appInfo)) {
-            XLog.i("Hook class fdfasdfs start.")
+            XLog.i("Hook system app start.")
             loadConfigDataAndParse()
             startWatchingConfigFiles()
             SpecialAppsHookerImpl.start(classLoader)

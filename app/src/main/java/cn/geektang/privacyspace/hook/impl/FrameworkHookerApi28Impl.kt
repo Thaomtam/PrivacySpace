@@ -10,20 +10,27 @@ import cn.geektang.privacyspace.util.XLog
 import cn.geektang.privacyspace.util.tryLoadClass
 import de.robv.android.xposed.XC_MethodHook
 import de.robv.android.xposed.XposedBridge
+import org.lsposed.hiddenapibypass.HiddenApiBypass
 import java.lang.reflect.Field
 import java.lang.reflect.Method
 
-object FrameworkHookerApi28Impl : XC_MethodHook(), Hooker {
+object FrameworkHookerApi28Impl : Hooker {
     private lateinit var pmsClass: Class<*>
     private lateinit var settingsClass: Class<*>
     private lateinit var mSettingsField: Field
     private lateinit var getAppIdMethod: Method
     private lateinit var getSettingLPrMethod: Method
     private lateinit var classLoader: ClassLoader
+    
+    // Store unhook handles for proper cleanup
+    private val unhooks = mutableListOf<XC_MethodHook.Unhook>()
 
     override fun start(classLoader: ClassLoader) {
         this.classLoader = classLoader
         try {
+            // Use HiddenApiBypass to safely access hidden APIs
+            HiddenApiBypass.addHiddenApiExemptions("Lcom/android/server/pm/", "Landroid/content/pm/")
+            
             pmsClass = HookUtil.loadPms(classLoader) ?: throw PackageManager.NameNotFoundException()
             mSettingsField = pmsClass.getDeclaredField("mSettings")
             mSettingsField.isAccessible = true
@@ -44,45 +51,101 @@ object FrameworkHookerApi28Impl : XC_MethodHook(), Hooker {
                 }
             }
         } catch (e: Throwable) {
-            XLog.e(e, "pms load failed.")
+            XLog.e(e, "PMS load failed.", e)
             return
         }
+        
+        // Create a reusable method hook callback
+        val callback = object : XC_MethodHook() {
+            override fun afterHookedMethod(param: MethodHookParam) {
+                when (param.method.name) {
+                    "filterAppAccessLPr" -> {
+                        hookFilterAppAccess(param)
+                    }
+                    "applyPostResolutionFilter" -> {
+                        hookApplyPostResolutionFilter(param)
+                    }
+                }
+            }
+        }
+        
+        // Hook methods and store unhook references
         pmsClass.declaredMethods.forEach { method ->
             when (method.name) {
                 "filterAppAccessLPr" -> {
                     if (method.parameterCount == 5) {
-                        XposedBridge.hookMethod(method, this)
+                        unhooks.add(XposedBridge.hookMethod(method, callback))
                     }
                 }
                 "applyPostResolutionFilter" -> {
-                    XposedBridge.hookMethod(method, this)
+                    unhooks.add(XposedBridge.hookMethod(method, callback))
                 }
-                else -> {}
             }
         }
+        
+        XLog.i("FrameworkHookerApi28Impl started successfully")
     }
-
-    override fun afterHookedMethod(param: MethodHookParam) {
-        when (param.method.name) {
-            "filterAppAccessLPr" -> {
-                hookFilterAppAccess(param)
-            }
-            "applyPostResolutionFilter" -> {
-                hookApplyPostResolutionFilter(param)
-            }
-            else -> {}
-        }
-
+    
+    override fun stop() {
+        // Properly unhook all methods
+        unhooks.forEach { it.unhook() }
+        unhooks.clear()
+        XLog.d("FrameworkHookerApi28Impl stopped")
     }
 
     private fun hookApplyPostResolutionFilter(param: MethodHookParam) {
-        val resultList = param.result as? MutableList<*> ?: return
-        val callingUid = param.args[3] as? Int ?: return
-        val userId = param.args[5] as? Int ?: return
-        val callingPackageName = getPackageName(param.thisObject, callingUid) ?: return
-        val waitRemoveList = mutableListOf<ResolveInfo>()
-        for (resolveInfo in resultList) {
-            val targetPackageName = (resolveInfo as? ResolveInfo)?.getPackageName() ?: continue
+        try {
+            val resultList = param.result as? MutableList<*> ?: return
+            val callingUid = param.args[3] as? Int ?: return
+            val userId = param.args[5] as? Int ?: return
+            val callingPackageName = getPackageName(param.thisObject, callingUid) ?: return
+            val waitRemoveList = mutableListOf<ResolveInfo>()
+            
+            for (resolveInfo in resultList) {
+                val targetPackageName = (resolveInfo as? ResolveInfo)?.getPackageName() ?: continue
+                val shouldIntercept = HookChecker.shouldIntercept(
+                    classLoader,
+                    userId,
+                    targetPackageName,
+                    callingPackageName
+                )
+                if (shouldIntercept) {
+                    waitRemoveList.add(resolveInfo)
+                }
+            }
+
+            for (resolveInfo in waitRemoveList) {
+                resultList.remove(resolveInfo)
+            }
+            if (waitRemoveList.isNotEmpty()) {
+                param.result = resultList
+            }
+        } catch (e: Throwable) {
+            XLog.e(e, "Error in hookApplyPostResolutionFilter")
+        }
+    }
+
+    private fun hookFilterAppAccess(param: MethodHookParam) {
+        try {
+            if (param.result == true) {
+                return
+            }
+            
+            val packageSetting = param.args.first()
+            // Use HiddenApiBypass to safely access package name
+            val targetPackageName = try {
+                packageSetting?.packageName
+            } catch (e: Throwable) {
+                // Fallback to reflection if direct access fails
+                HiddenApiBypass.getInstanceFields(packageSetting!!.javaClass)
+                    .find { it.name == "name" || it.name == "packageName" }
+                    ?.get(packageSetting) as? String
+            } ?: return
+            
+            val callingUid = param.args[1] as Int
+            val userId = param.args[4] as Int
+            val callingPackageName = getPackageName(param.thisObject, callingUid) ?: return
+
             val shouldIntercept = HookChecker.shouldIntercept(
                 classLoader,
                 userId,
@@ -90,42 +153,24 @@ object FrameworkHookerApi28Impl : XC_MethodHook(), Hooker {
                 callingPackageName
             )
             if (shouldIntercept) {
-                waitRemoveList.add(resolveInfo)
+                param.result = true
             }
-        }
-
-        for (resolveInfo in waitRemoveList) {
-            resultList.remove(resolveInfo)
-        }
-        if (waitRemoveList.isNotEmpty()) {
-            param.result = resultList
-        }
-    }
-
-    private fun hookFilterAppAccess(param: MethodHookParam) {
-        if (param.result == true) {
-            return
-        }
-        val packageSetting = param.args.first()
-        val targetPackageName = packageSetting?.packageName ?: return
-        val callingUid = param.args[1] as Int
-        val userId = param.args[4] as Int
-        val callingPackageName = getPackageName(param.thisObject, callingUid) ?: return
-
-        val shouldIntercept = HookChecker.shouldIntercept(
-            classLoader,
-            userId,
-            targetPackageName,
-            callingPackageName
-        )
-        if (shouldIntercept) {
-            param.result = true
+        } catch (e: Throwable) {
+            XLog.e(e, "Error in hookFilterAppAccess")
         }
     }
 
     private fun getPackageName(pms: Any, uid: Int): String? {
-        val callingAppId = getAppIdMethod.invoke(null, uid)
-        val mSettings = mSettingsField.get(pms)
-        return getSettingLPrMethod.invoke(mSettings, callingAppId)?.packageName
+        return try {
+            val callingAppId = getAppIdMethod.invoke(null, uid)
+            val mSettings = mSettingsField.get(pms)
+            val packageSetting = getSettingLPrMethod.invoke(mSettings, callingAppId)
+            
+            // Use HiddenApiBypass to get the package name
+            packageSetting?.packageName
+        } catch (e: Throwable) {
+            XLog.e(e, "Error in getPackageName")
+            null
+        }
     }
 }

@@ -1,5 +1,7 @@
 package cn.geektang.privacyspace.hook.impl
 
+import android.annotation.TargetApi
+import android.os.Build
 import cn.geektang.privacyspace.hook.Hooker
 import cn.geektang.privacyspace.util.XLog
 import cn.geektang.privacyspace.util.tryLoadClass
@@ -10,10 +12,11 @@ import org.lsposed.hiddenapibypass.HiddenApiBypass
 import java.util.concurrent.atomic.AtomicReference
 
 /**
- * Implementation for Android 11+ (API 30+)
- * Uses org.lsposed.hiddenapibypass to access hidden APIs more reliably
+ * Implementation for Android 13+ (API 33+)
+ * Handles the latest changes to the package manager in Android 13
  */
-object FrameworkHookerApi30Impl : Hooker {
+@TargetApi(Build.VERSION_CODES.TIRAMISU)
+object FrameworkHookerApi33Impl : Hooker {
     private lateinit var classLoader: ClassLoader
     private var unhook: XC_MethodHook.Unhook? = null
     private val lastFilteredApp = AtomicReference<String?>(null)
@@ -22,44 +25,63 @@ object FrameworkHookerApi30Impl : Hooker {
         this.classLoader = classLoader
         
         try {
-            // Add relevant classes to Hidden API exemption list
+            // Add all relevant package manager classes to exemption list
             HiddenApiBypass.addHiddenApiExemptions(
                 "Landroid/content/pm/", 
                 "Lcom/android/server/pm/",
                 "Lcom/android/server/"
             )
             
-            // Use HiddenApiBypass to get the correct class regardless of API restrictions
+            // Android 13 uses a slightly different structure for AppsFilter
             val appsFilterClass = classLoader.tryLoadClass("com.android.server.pm.AppsFilter")
             val settingBaseClass = classLoader.tryLoadClass("com.android.server.pm.SettingBase")
             val packageSettingClass = classLoader.tryLoadClass("com.android.server.pm.PackageSetting")
             
-            // Create a hook callback that uses HiddenApiBypass when needed
+            // Create the hook callback
             val callback = object : XC_MethodHook() {
                 override fun beforeHookedMethod(param: MethodHookParam) {
                     try {
-                        // Get the original parameters
+                        // Android 13 still uses the same basic parameters for shouldFilterApplication
                         val callingUid = param.args[0] as Int
                         if (callingUid == 1000) return // SYSTEM UID, don't filter
                         
+                        // Use HiddenApiBypass to safely access hidden fields/methods
                         val callingSettingBase = param.args[1]
                         val targetPackageSetting = param.args[2]
                         val userId = param.args[3] as Int
                         
-                        // Use HiddenApiBypass to access package names
-                        val callingPackageName = HiddenApiBypass.invoke(
-                            settingBaseClass, 
-                            callingSettingBase, 
-                            "getPackageName"
-                        ) as? String ?: return
+                        // In Android 13, we need to be more careful with hidden API access
+                        val callingPackageName: String? = try {
+                            HiddenApiBypass.invoke(
+                                settingBaseClass, 
+                                callingSettingBase, 
+                                "getPackageName"
+                            ) as? String
+                        } catch (e: Exception) {
+                            // Fallback to direct field access if method fails
+                            HiddenApiBypass.getInstanceFields(settingBaseClass)
+                                .find { it.name == "name" || it.name == "packageName" }
+                                ?.get(callingSettingBase) as? String
+                        }
                         
-                        val targetPackageName = HiddenApiBypass.invoke(
-                            packageSettingClass, 
-                            targetPackageSetting, 
-                            "getPackageName"
-                        ) as? String ?: return
+                        val targetPackageName: String? = try {
+                            HiddenApiBypass.invoke(
+                                packageSettingClass, 
+                                targetPackageSetting, 
+                                "getPackageName"
+                            ) as? String
+                        } catch (e: Exception) {
+                            // Fallback to direct field access if method fails
+                            HiddenApiBypass.getInstanceFields(packageSettingClass)
+                                .find { it.name == "name" || it.name == "packageName" }
+                                ?.get(targetPackageSetting) as? String
+                        }
                         
-                        // Check if we should intercept this query
+                        if (callingPackageName == null || targetPackageName == null) {
+                            return
+                        }
+                        
+                        // Use the existing HookChecker to maintain Privacy Space's behavior
                         val shouldIntercept = HookChecker.shouldIntercept(
                             classLoader = classLoader,
                             targetPackageName = targetPackageName,
@@ -76,12 +98,12 @@ object FrameworkHookerApi30Impl : Hooker {
                             XLog.v("Filtered query: $callingPackageName -> $targetPackageName (UID: $callingUid, User: $userId)")
                         }
                     } catch (t: Throwable) {
-                        XLog.e(t, "Error in FrameworkHookerApi30Impl hook")
+                        XLog.e(t, "Error in FrameworkHookerApi33Impl hook")
                     }
                 }
             }
             
-            // Create the hook
+            // Hook the method
             unhook = XposedBridge.hookMethod(
                 XposedHelpers.findMethodExact(
                     appsFilterClass,
@@ -94,15 +116,15 @@ object FrameworkHookerApi30Impl : Hooker {
                 callback
             )
             
-            XLog.i("FrameworkHookerApi30Impl started successfully")
+            XLog.i("FrameworkHookerApi33Impl started successfully")
         } catch (e: Throwable) {
-            XLog.e(e, "FrameworkHookerApi30Impl start failed.")
+            XLog.e(e, "FrameworkHookerApi33Impl start failed.")
         }
     }
     
     override fun stop() {
         unhook?.unhook()
         unhook = null
-        XLog.d("FrameworkHookerApi30Impl stopped")
+        XLog.d("FrameworkHookerApi33Impl stopped")
     }
 }

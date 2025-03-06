@@ -11,11 +11,16 @@ import cn.geektang.privacyspace.constant.ConfigConstant
 import cn.geektang.privacyspace.hook.HookMain
 import cn.geektang.privacyspace.util.HookUtil
 import cn.geektang.privacyspace.util.XLog
+import org.lsposed.hiddenapibypass.HiddenApiBypass
+import java.util.concurrent.ConcurrentHashMap
 
 object HookChecker {
     @Volatile
     private var greenChannel = false
     private var defaultBlindWhitelist: Set<String> = emptySet()
+    
+    // Cache the shared user ID map to improve performance
+    private val sharedUserIdMapCache = ConcurrentHashMap<Int, Map<String, List<String>>>()
 
     @JvmStatic
     fun shouldIntercept(
@@ -33,12 +38,12 @@ object HookChecker {
 
             val sharedUserIdMap = getSharedUserIdMap(classLoader)
             if (null != sharedUserIdMap) {
-                val defaultBlindWhitelist = ConfigConstant.defaultBlindWhitelist.toMutableSet()
+                val newDefaultBlindWhitelist = ConfigConstant.defaultBlindWhitelist.toMutableSet()
                 for (white in ConfigConstant.defaultBlindWhitelist) {
                     val value = sharedUserIdMap[white] ?: emptyList()
-                    defaultBlindWhitelist.addAll(value)
+                    newDefaultBlindWhitelist.addAll(value)
                 }
-                this@HookChecker.defaultBlindWhitelist = defaultBlindWhitelist
+                this@HookChecker.defaultBlindWhitelist = newDefaultBlindWhitelist
             }
         }
         greenChannel = false
@@ -58,16 +63,18 @@ object HookChecker {
         val defaultBlindWhitelist = defaultBlindWhitelist
         XLog.enableLog = configData.enableDetailLog
 
+        // Handle blind mode apps (apps that can't see most other apps)
         if (defaultBlindWhitelist.isNotEmpty()
             && !defaultBlindWhitelist.contains(targetPackageName)
             && blindApps.contains(callingPackageName)
             && connectedAppsInfoMap[callingPackageName]?.contains(targetPackageName) != true
             && connectedAppsInfoMap[targetPackageName]?.contains(callingPackageName) != true
         ) {
-            XLog.d("$callingPackageName was prevented from reading ${targetPackageName}.")
+            XLog.d("$callingPackageName was prevented from reading ${targetPackageName} (blind mode).")
             return true
         }
 
+        // Handle regular hidden app list
         if (!defaultWhitelist.contains(callingPackageName)
             && shouldFilterAppList.contains(targetPackageName)
         ) {
@@ -81,32 +88,54 @@ object HookChecker {
                 XLog.d("$callingPackageName was prevented from reading ${targetPackageName}.")
                 result = true
             } else {
-                XLog.d("$callingPackageName read ${targetPackageName}.")
+                XLog.v("$callingPackageName allowed to read ${targetPackageName}.")
             }
         }
         return result
     }
 
     private fun getSharedUserIdMap(classLoader: ClassLoader): Map<String, List<String>>? {
-        val pms = ServiceManager.getService("package")
-        val pmsClass = HookUtil.loadPms(classLoader)
-        if (pms?.javaClass == pmsClass) {
-            return if (Build.VERSION.SDK_INT >= 29) {
-                getSharedUidMapAfterQ(pms)
-            } else {
-                getSharedUidMapCompat(pms)
+        try {
+            // Check cache first
+            val cacheKey = System.identityHashCode(classLoader)
+            sharedUserIdMapCache[cacheKey]?.let { return it }
+            
+            // Enable Hidden API access
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                HiddenApiBypass.addHiddenApiExemptions("Landroid/os/", "Lcom/android/server/pm/")
             }
+            
+            val pms = ServiceManager.getService("package")
+            val pmsClass = HookUtil.loadPms(classLoader)
+            if (pms?.javaClass == pmsClass) {
+                val result = if (Build.VERSION.SDK_INT >= 29) {
+                    getSharedUidMapAfterQ(pms)
+                } else {
+                    getSharedUidMapCompat(pms)
+                }
+                
+                // Cache the result
+                if (result != null) {
+                    sharedUserIdMapCache[cacheKey] = result
+                }
+                
+                return result
+            }
+            return null
+        } catch (e: Throwable) {
+            XLog.e(e, "Failed to get shared user ID map")
+            return null
         }
-        return null
     }
 
-    // more efficient
+    // More efficient implementation for Android 10+
     private fun getSharedUidMapAfterQ(pms: Any): Map<String, List<String>>? {
         val pmsClass = pms.javaClass
         return try {
-            val getAppsWithSharedUserMethod =
-                pmsClass.getDeclaredMethod("getAppsWithSharedUserIdsLocked")
+            // Use Hidden API Bypass to access these methods safely
+            val getAppsWithSharedUserMethod = pmsClass.getDeclaredMethod("getAppsWithSharedUserIdsLocked")
             getAppsWithSharedUserMethod.isAccessible = true
+            
             val getPackagesForUidMethod = pmsClass.getDeclaredMethod(
                 "getPackagesForUid",
                 Int::class.javaPrimitiveType
@@ -115,52 +144,65 @@ object HookChecker {
 
             val sharedUserIdMap = ArrayMap<String, List<String>>()
             val result = getAppsWithSharedUserMethod.invoke(pms) as SparseArray<*>
+            
             result.forEach { key, value ->
-                val packages =
-                    getPackagesForUidMethod.invoke(
-                        pms,
-                        key
-                    ) as Array<*>
-                sharedUserIdMap[value.toString()] = (packages as Array<String>).toList()
+                try {
+                    val packages = getPackagesForUidMethod.invoke(pms, key) as Array<*>
+                    sharedUserIdMap[value.toString()] = (packages as Array<String>).toList()
+                } catch (e: Exception) {
+                    XLog.e(e, "Failed to get packages for UID $key")
+                }
             }
             sharedUserIdMap
         } catch (e: Throwable) {
+            XLog.e(e, "Failed to get shared UID map using Android 10+ method, falling back to compat method")
             getSharedUidMapCompat(pms)
         }
     }
 
-    // better compatibility
+    // Better compatibility for older Android versions
     private fun getSharedUidMapCompat(pms: Any): Map<String, List<String>>? {
         val pmsClass = pms.javaClass
         return try {
+            // Try to get the installed packages method
             val getInstalledPackagesMethod = pmsClass.getDeclaredMethod(
                 "getInstalledPackages",
                 Int::class.javaPrimitiveType,
                 Int::class.javaPrimitiveType
             ) ?: return null
+            
             getInstalledPackagesMethod.isAccessible = true
+            
+            // Get the ParceledListSlice containing the package info
             val resultParceledListSlice = getInstalledPackagesMethod.invoke(
                 pms,
                 PackageManager.MATCH_UNINSTALLED_PACKAGES,
                 0
             )
+            
+            // Get the actual list from the ParceledListSlice
             val listMethod = resultParceledListSlice.javaClass.getDeclaredMethod("getList")
             listMethod.isAccessible = true
             val resultList = listMethod.invoke(resultParceledListSlice) as? List<*> ?: return null
+            
+            // Process the list to build the shared user ID map
             val sharedUserIdMap = ArrayMap<String, MutableList<String>>()
             for (packageInfo in resultList) {
-                if (packageInfo !is PackageInfo) return null
+                if (packageInfo !is PackageInfo) continue
+                
                 val sharedUserId = packageInfo.sharedUserId
                 if (sharedUserId.isNullOrEmpty()) {
                     continue
                 }
-                val sharedUserIdPackages =
-                    sharedUserIdMap.getOrDefault(sharedUserId, mutableListOf())
+                
+                val sharedUserIdPackages = sharedUserIdMap.getOrDefault(sharedUserId, mutableListOf())
                 sharedUserIdPackages.add(packageInfo.packageName)
                 sharedUserIdMap[sharedUserId] = sharedUserIdPackages
             }
+            
             sharedUserIdMap
         } catch (e: Throwable) {
+            XLog.e(e, "Failed to get shared UID map using compatibility method")
             null
         }
     }
