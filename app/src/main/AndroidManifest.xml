@@ -1,27 +1,21 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    xmlns:tools="http://schemas.android.com/tools"
-    package="cn.geektang.privacyspace">
-
-    <uses-permission
-        android:name="android.permission.QUERY_ALL_PACKAGES"
-        tools:ignore="QueryAllPackagesPermission" />
+    xmlns:tools="http://schemas.android.com/tools">
 
     <application
-        android:name=".App"
-        android:allowBackup="false"
+        android:name=".HideMySpaceApp"
+        android:allowBackup="true"
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
-        android:theme="@style/Theme.PrivacySpace">
+        android:theme="@style/Theme.HideMySpace">
+
         <activity
-            android:name=".ui.main.MainActivity"
-            android:exported="true"
-            android:theme="@style/Theme.PrivacySpace">
+            android:name=".ui.MainActivity"
+            android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
-
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
@@ -31,13 +25,13 @@
             android:value="true" />
         <meta-data
             android:name="xposeddescription"
-            android:value="@string/xposeddescription" />
+            android:value="Ẩn ứng dụng và tạo không gian riêng tư" />
         <meta-data
             android:name="xposedminversion"
-            android:value="53" />
+            android:value="82" />
         <meta-data
             android:name="xposedscope"
             android:resource="@array/xposed_scope" />
     </application>
 
-</manifest>
+</manifest> 

@@ -1,74 +1,51 @@
-# Privacy Space (Modernized)
+# Hide My Space
 
-[![Stars](https://img.shields.io/github/stars/GeekTR/PrivacySpace?label=Stars)](https://github.com/GeekTR/PrivacySpace)
-[![Release](https://img.shields.io/github/v/release/Xposed-Modules-Repo/cn.geektang.privacyspace?label=Release)](https://github.com/Xposed-Modules-Repo/cn.geektang.privacyspace/releases/latest)
-[![Download](https://img.shields.io/github/downloads/Xposed-Modules-Repo/cn.geektang.privacyspace/total)](https://github.com/Xposed-Modules-Repo/cn.geektang.privacyspace/releases/latest)
-[![Channel](https://img.shields.io/badge/Follow-Telegram-blue.svg?logo=telegram)](https://t.me/PrivacySpaceAlpha)
-[![GitHub license](https://img.shields.io/github/license/Xposed-Modules-Repo/cn.geektang.privacyspace)](https://github.com/Xposed-Modules-Repo/cn.geektang.privacyspace/blob/main/LICENSE)
+Module Xposed để ẩn ứng dụng và tạo không gian riêng tư trên thiết bị Android.
 
-[中文文档](https://github.com/Xposed-Modules-Repo/cn.geektang.privacyspace/blob/main/README_CN.md)
+## Tính năng
 
-## Overview
-Privacy Space is an Xposed module that allows you to hide apps from other apps on your device. This creates functionality similar to a "Second Space" feature found on some Android devices. The module has been updated with modern techniques inspired by HideMyAppList to improve compatibility with newer Android versions (up to Android 13/API 33).
+- Ẩn ứng dụng khỏi các ứng dụng khác
+- Hỗ trợ danh sách trắng (whitelist) và danh sách đen (blacklist)
+- Tùy chọn loại trừ ứng dụng hệ thống
+- Tương thích với các phiên bản Android từ 8.0 trở lên
+- Giao diện người dùng thân thiện và dễ sử dụng
 
-## Features
-- Hide apps from other apps (prevent apps from detecting each other)
-- Bypass root/Xposed detection in banking apps by hiding Magisk/LSPosed
-- Prevent automatic app updates from app stores
-- Stop advertising apps from detecting and launching other apps
-- Protect privacy by preventing software providers from knowing what apps you have installed
-- Blind mode: prevent specified apps from seeing most other apps
+## Yêu cầu
 
-## What's New in This Version
-- **Support for Android 13**: Added specific hooks for Android 13 (API 33)
-- **Hidden API Bypass**: Now uses org.lsposed.hiddenapibypass for better compatibility with Android 9+ restrictions
-- **Modern Build System**: Converted from Groovy DSL to Kotlin DSL for better type safety and maintainability
-- **Improved Hook Management**: Added proper hook cleanup logic for better stability
-- **Performance Optimizations**: Added caching to reduce overhead in heavily-used methods
+- Android 8.0 trở lên
+- LSPosed, EdXposed hoặc các framework Xposed tương tự
+- Quyền root (tùy thuộc vào framework Xposed được sử dụng)
 
-## Requirements
-- Android 8.0+ (API 26+)
-- LSPosed, EdXposed, or other Xposed framework
-- Root access (for the Xposed framework)
+## Cài đặt
 
-## How to Use
+1. Cài đặt LSPosed hoặc framework Xposed tương tự
+2. Cài đặt ứng dụng Hide My Space
+3. Kích hoạt module trong LSPosed Manager
+4. Khởi động lại thiết bị
+5. Mở ứng dụng Hide My Space và cấu hình các ứng dụng cần ẩn
 
-### Hiding Apps
-1. Enable the module in your Xposed framework manager
-2. Open the Privacy Space app
-3. Go to "Manage Hidden Apps" and select the apps you want to hide
-4. Reboot for changes to take effect
+## Cách sử dụng
 
-### Setting Up Whitelist
-Some apps need to see other apps to function properly. You can add these to your whitelist:
-1. Go to "Set Whitelist" in the app
-2. Select apps that should be able to see all other apps
-3. Whitelist apps will be able to see hidden apps regardless of other settings
+### Ẩn ứng dụng
 
-### Connected Apps
-Connected apps can see each other even if they're hidden:
-1. Go to "Set Connected Apps" in the app
-2. Select apps that should be able to see each other
+1. Mở ứng dụng Hide My Space
+2. Chọn ứng dụng bạn muốn cấu hình (ứng dụng sẽ không thể thấy các ứng dụng khác)
+3. Chọn chế độ danh sách trắng hoặc danh sách đen
+4. Chọn các ứng dụng bạn muốn ẩn (hoặc hiển thị nếu sử dụng danh sách trắng)
+5. Lưu cấu hình
 
-### Blind Mode
-Blind mode prevents an app from seeing most other apps:
-1. Go to "Blind Mode" in the app
-2. Select apps that should be "blind"
-3. These apps will only see system apps and apps in your whitelist
+### Cài đặt
 
-## Compatibility
-- Android 8 (Oreo): Uses FrameworkHookerApi26Impl
-- Android 9-10 (Pie/Q): Uses FrameworkHookerApi28Impl
-- Android 11-12 (R/S): Uses FrameworkHookerApi30Impl
-- Android 13 (T): Uses FrameworkHookerApi33Impl
+- **Chế độ tối**: Bật/tắt chế độ giao diện tối
+- **Ghi log chi tiết**: Bật/tắt ghi log chi tiết (hữu ích cho việc gỡ lỗi)
+- **Tự động khởi động lại**: Tự động khởi động lại thiết bị sau khi thay đổi cấu hình
 
-## Troubleshooting
-- If apps can still detect hidden apps, try clearing their cache and data
-- For banking apps, you may need to add their service/dependency apps to the hidden list too
-- If you experience crashes, check the Xposed logs for details
+## Giấy phép
 
-## Credits
-- Original Privacy Space module
-- Techniques adapted from the HideMyAppList project
-- org.lsposed.hiddenapibypass for hidden API access
-- EzXHelper for simplified Xposed hooking
+Dự án này được phân phối dưới giấy phép GPL-3.0.
+
+## Lưu ý
+
+- Module này chỉ ẩn ứng dụng khỏi các ứng dụng khác, không xóa hoặc vô hiệu hóa ứng dụng
+- Một số ứng dụng hệ thống có thể vẫn nhìn thấy tất cả các ứng dụng đã cài đặt
+- Hiệu suất có thể bị ảnh hưởng trên các thiết bị cũ hoặc có cấu hình thấp 
